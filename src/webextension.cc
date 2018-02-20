@@ -1,7 +1,7 @@
 #include <webkit2/webkit-web-extension.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <string.h>
-#include <soup.h>
+#include <libsoup/soup.h>
 #include "utils.h"
 
 static WebKitWebExtension* extension;
