@@ -1,0 +1,5 @@
+# Common Issues
+
+- background doesn't work in flex container for transparent window
+- transparent window will show white background when doing css animation or transition.
+- window cannot be resized lower than 200
