@@ -1,5 +1,5 @@
 {
-  "name": "webkitgtk",
+  "name": "webkit-gtk",
   "version": "4.8.0",
   "description": "webkitgtk addon with powerful Node.js API",
   "keywords": [
@@ -40,7 +40,8 @@
     "http-digest-auth": "^0.1.3",
     "mocha": "^2.5.3",
     "pdfinfo": "0.0.3",
-    "rimraf": "^2.5.4"
+    "rimraf": "^2.5.4",
+    "systeminformation": "^3.37.2"
   },
   "scripts": {
     "install": "make || exit 0",
