@@ -1,0 +1,114 @@
+<html>
+
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <style>
+    body,
+    html {
+      width: 100%;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      pointer-events: all;
+      display: inline-block;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      max-height: 100%;
+      box-sizing: border-box;
+      border-top-right-radius: 10px;
+      border-top-left-radius: 10px;
+      padding: 2px 4px;
+    }
+
+    .container img {
+      display: inline-block;
+      /* float: left; */
+      transition: transform 500ms ease-in;
+      width: 45px;
+      height: 45px;
+      padding: 4px 0px 0 0px;
+      cursor: pointer;
+    }
+
+    #container {
+      position: absolute;
+      top: 145px;
+      background-color: rgb(47, 47, 47);
+      border-top-right-radius: 10px;
+      border-top-left-radius: 10px;
+      pointer-events: all;
+    }
+
+    .rotate {
+      transform: rotate(360deg);
+    }
+
+    /* canvas {
+      position: absolute;
+      top: 145px;
+      background-color: rgb(47, 47, 47);
+      border-top-right-radius: 10px;
+      border-top-left-radius: 10px;
+    } */
+
+    .bounce {
+      animation: bounce ease-in-out 700ms;
+    }
+
+    @keyframes rotate {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes bounce {
+      0%,
+      20%,
+      50%,
+      80%,
+      100% {
+        transform: translateY(0);
+      }
+      40% {
+        transform: translateY(-30px);
+      }
+      60% {
+        transform: translateY(-15px);
+      }
+    }
+  </style>
+  <script type="text/javascript">
+    function rotate(e) {
+      e.target.classList.toggle('bounce');
+    }
+    // moveTo(0, 0)
+
+  </script>
+</head>
+
+<body>
+  <template id="icons">
+    <img src="../icons/xterm.svg" onclick="rotate(event)" />
+    <img src="../icons/youtube.svg" onclick="rotate(event)" />
+    <img src="../icons/web-browser.svg" onclick="rotate(event)" />
+    <img src="../icons/visual-studio-code.svg" onclick="rotate(event)" />
+  </template>
+  <!-- <canvas id="c"></canvas> -->
+  <div id="container"></div>
+  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/90/three.js"></script> -->
+  <script src="https://cdn.rawgit.com/konvajs/konva/1.7.6/konva.min.js"></script>
+  <script src="../js/dock.js"></script>
+</body>
+
+</html>
