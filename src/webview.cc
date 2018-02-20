@@ -1,24 +1,23 @@
-#include <JavaScriptCore/JSValueRef.h>
 #include <JavaScriptCore/JSStringRef.h>
-#include <node.h>
-#include "utils.h"
+#include <JavaScriptCore/JSValueRef.h>
 #include "webview.h"
 #include "gvariantproxy.h"
-#include "webresponse.h"
-#include "webrequest.h"
+#include "utils.h"
 #include "webauthrequest.h"
-
+#include "webrequest.h"
+#include "webresponse.h"
+#include <node.h>
 
 using namespace v8;
 
 Nan::Persistent<Function> WebView::constructor;
 
-static uv_timer_t* timeout_handle = new uv_timer_t;
+static uv_timer_t *timeout_handle = new uv_timer_t;
 
 #if UV_VERSION_MAJOR >= 1
-void timeout_cb(uv_timer_t* handle) {
+void timeout_cb(uv_timer_t *handle) {
 #else
-void timeout_cb(uv_timer_t* handle, int status) {
+void timeout_cb(uv_timer_t *handle, int status) {
 #endif
 	if (gtk_events_pending()) {
 		gtk_main_iteration_do(false);
@@ -26,7 +25,10 @@ void timeout_cb(uv_timer_t* handle, int status) {
 }
 
 WebView::WebView(Handle<Object> opts) {
-	Nan::Utf8String* cstampStr = getOptStr(opts, "cstamp");
+	Isolate* isolate = opts->GetIsolate();
+	Local<Context> ctx = isolate->GetCurrentContext();
+
+	Nan::Utf8String *cstampStr = getOptStr(opts, "cstamp");
 	this->cstamp = **cstampStr;
 	this->receiveDataCallback = getCb(opts, "receiveDataListener");
 	this->responseCallback = getCb(opts, "responseListener");
@@ -37,8 +39,23 @@ WebView::WebView(Handle<Object> opts) {
 
 	this->offscreen = opts->Get(H("offscreen"))->BooleanValue();
 	this->resizing = opts->Get(H("resizing"))->BooleanValue();
-	bool hasInspector = opts->Get(H("inspector"))->BooleanValue();
 
+	Handle<Object> windowOpts = Handle<Object>::Cast(opts->Get(H("window")));
+	Local<v8::Array> windowProps = windowOpts->GetOwnPropertyNames(ctx).ToLocalChecked();
+
+	this->skipPagerHint = windowOpts->Get(H("show"))->BooleanValue();
+	this->skipPagerHint = windowOpts->Get(H("skipPagerHint"))->BooleanValue();
+	this->skipTaskbarHint = windowOpts->Get(H("skipTaskbarHint"))->BooleanValue();
+	this->acceptFocus = windowOpts->Get(H("acceptFocus"))->BooleanValue();
+	this->resizable = windowOpts->Get(H("resizable"))->BooleanValue();
+	this->typeHint = windowOpts->Get(H("typeHint"))->IntegerValue();
+	this->show = windowOpts->Get(H("show"))->BooleanValue();
+	this->paintable = windowOpts->Get(H("paintable"))->BooleanValue();
+
+	Nan::Utf8String *roleStr = getOptStr(windowOpts, "role");
+	this->role = **roleStr;
+	int type = windowOpts->Get(H("type"))->IntegerValue();
+	bool hasInspector = opts->Get(H("inspector"))->BooleanValue();
 	Nan::AdjustExternalMemory(400000);
 
 	state = 0;
@@ -50,30 +67,29 @@ WebView::WebView(Handle<Object> opts) {
 	}
 	instances.insert(ObjMapPair(this->cstamp, this));
 
-	Nan::Utf8String* cacheDirStr = getOptStr(opts, "cacheDir");
+	Nan::Utf8String *cacheDirStr = getOptStr(opts, "cacheDir");
 	if (cacheDirStr->length() == 0) {
 		cacheDir = g_build_filename(g_get_user_cache_dir(), "node-webkitgtk", NULL);
 	} else {
 		cacheDir = g_strdup(**cacheDirStr);
 	}
 	delete cacheDirStr;
-	#if WEBKIT_CHECK_VERSION(2,10,0)
-	WebKitWebsiteDataManager* dataManager = webkit_website_data_manager_new(
-		"base-cache-directory", cacheDir,
-		NULL
-	);
+#if WEBKIT_CHECK_VERSION(2, 10, 0)
+	WebKitWebsiteDataManager *dataManager =
+		webkit_website_data_manager_new("base-cache-directory", cacheDir, NULL);
 	context = webkit_web_context_new_with_website_data_manager(dataManager);
 	g_object_unref(dataManager);
-	#else
-		#if WEBKIT_CHECK_VERSION(2,8,0)
+	this->dataManager = dataManager;
+#else
+#if WEBKIT_CHECK_VERSION(2, 8, 0)
 	context = webkit_web_context_new();
-		#else
+#else
 	context = webkit_web_context_get_default();
-		#endif
+#endif
 	webkit_web_context_set_disk_cache_directory(context, cacheDir);
-	#endif
+#endif
 
-	Nan::Utf8String* cacheModelStr = getOptStr(opts, "cacheModel");
+	Nan::Utf8String *cacheModelStr = getOptStr(opts, "cacheModel");
 	WebKitCacheModel cacheModel = WEBKIT_CACHE_MODEL_WEB_BROWSER;
 	if (cacheModelStr->length() != 0) {
 		if (g_strcmp0(**cacheModelStr, "none") == 0) {
@@ -85,38 +101,39 @@ WebView::WebView(Handle<Object> opts) {
 		}
 	}
 
-	webkit_web_context_set_process_model(context, WEBKIT_PROCESS_MODEL_MULTIPLE_SECONDARY_PROCESSES);
+	webkit_web_context_set_process_model(
+		context, WEBKIT_PROCESS_MODEL_MULTIPLE_SECONDARY_PROCESSES);
 	webkit_web_context_set_cache_model(context, cacheModel);
-	webkit_web_context_set_tls_errors_policy(context, WEBKIT_TLS_ERRORS_POLICY_IGNORE);
+	webkit_web_context_set_tls_errors_policy(context,
+	                                         WEBKIT_TLS_ERRORS_POLICY_IGNORE);
 
-	Nan::Utf8String* cookiePolicyStr = getOptStr(opts, "cookiePolicy");
-	WebKitCookieManager* cookieManager = webkit_web_context_get_cookie_manager(context);
+	Nan::Utf8String *cookiePolicyStr = getOptStr(opts, "cookiePolicy");
+	WebKitCookieManager *cookieManager =
+		webkit_web_context_get_cookie_manager(context);
 	if (!g_strcmp0(**cookiePolicyStr, "never")) {
-		webkit_cookie_manager_set_accept_policy(cookieManager, WEBKIT_COOKIE_POLICY_ACCEPT_NEVER);
+		webkit_cookie_manager_set_accept_policy(cookieManager,
+		                                        WEBKIT_COOKIE_POLICY_ACCEPT_NEVER);
 	} else if (!g_strcmp0(**cookiePolicyStr, "always")) {
-		webkit_cookie_manager_set_accept_policy(cookieManager, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
+		webkit_cookie_manager_set_accept_policy(cookieManager,
+		                                        WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
 	} else {
-		webkit_cookie_manager_set_accept_policy(cookieManager, WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY);
+		webkit_cookie_manager_set_accept_policy(
+			cookieManager, WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY);
 	}
 	delete cookiePolicyStr;
 
-	Nan::Utf8String* wePathStr = getOptStr(opts, "webextension");
+	Nan::Utf8String *wePathStr = getOptStr(opts, "webextension");
 	if (wePathStr->length() > 0) {
 		extensionsDirectory = g_strdup(**wePathStr);
-		this->contextSignalId = g_signal_connect(
-			context,
-			"initialize-web-extensions",
-			G_CALLBACK(WebView::InitExtensions),
-			this
-		);
+		this->contextSignalId =
+			g_signal_connect(context, "initialize-web-extensions",
+			                 G_CALLBACK(WebView::InitExtensions), this);
 	}
 	delete wePathStr;
 
-	view = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-		"user-content-manager", webkit_user_content_manager_new(),
-		"web-context", context,
-		NULL
-	));
+	view = WEBKIT_WEB_VIEW(g_object_new(
+				       WEBKIT_TYPE_WEB_VIEW, "user-content-manager",
+				       webkit_user_content_manager_new(), "web-context", context, NULL));
 
 	if (!this->offscreen) {
 		window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -124,66 +141,158 @@ WebView::WebView(Handle<Object> opts) {
 		window = gtk_offscreen_window_new();
 	}
 
-	// WindowClosed will in turn call destroy (through webkitgtk.js closedListener)
+
+	// WindowClosed will in turn call destroy (through webkitgtk.js
+	// closedListener)
 	g_signal_connect(window, "destroy", G_CALLBACK(WebView::WindowClosed), this);
 
-	GdkScreen* screen = gtk_window_get_screen(GTK_WINDOW(window));
-	GdkVisual* rgba_visual = gdk_screen_get_rgba_visual(screen);
+	GdkScreen *screen = gtk_window_get_screen(GTK_WINDOW(window));
+	GdkVisual *rgba_visual = gdk_screen_get_rgba_visual(screen);
 	if (rgba_visual) {
 		gtk_widget_set_visual(window, rgba_visual);
-#if WEBKIT_CHECK_VERSION(2,7,4)
+#if WEBKIT_CHECK_VERSION(2, 7, 4)
 		transparencySupport = TRUE;
 #endif
 	}
-	gtk_widget_set_app_paintable(window, TRUE);
 
-	gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
-	gtk_widget_show_all(window);
+	int w = NanUInt32OptionValue(windowOpts, H("width"), 1024);
+	int h = NanUInt32OptionValue(windowOpts, H("height"), 768);
 
-	if (hasInspector) {
-		g_object_set(G_OBJECT(webkit_web_view_get_settings(view)), "enable-developer-extras", TRUE, NULL);
-		inspector = webkit_web_view_get_inspector(view);
-		g_signal_connect(inspector, "closed", G_CALLBACK(WebView::InspectorClosed), this);
-	} else {
-		g_object_set(G_OBJECT(webkit_web_view_get_settings(view)), "enable-developer-extras", FALSE, NULL);
+	gtk_window_set_default_size(GTK_WINDOW(window), w, h);
+	int new_width, new_height;
+	gtk_window_get_size (GTK_WINDOW(window), &new_width, &new_height);
+
+	if(new_width != w || new_height != h) {
+		g_warning("size cannot be applied width=%d height=%d\n", w, h);
+		// gtk_widget_queue_resize(GTK_WIDGET(self->window));
+		// gtk_widget_set_size_request(GTK_WIDGET(self->window), h, w);
 	}
 
-	g_signal_connect(view, "authenticate", G_CALLBACK(WebView::Authenticate), this);
+	gtk_window_set_role(GTK_WINDOW(window), this->role);
+	gtk_widget_set_app_paintable(GTK_WIDGET(window), this->paintable);
+	gtk_window_set_skip_pager_hint(GTK_WINDOW(window), this->skipPagerHint);
+	gtk_window_set_skip_taskbar_hint(GTK_WINDOW(window), this->skipTaskbarHint);
+	gtk_window_set_type_hint(GTK_WINDOW(window), getTypeHint(this->typeHint));
+	gtk_window_set_resizable(GTK_WINDOW(window), this->resizable);
+	gtk_window_set_keep_above(GTK_WINDOW(window), this->keepAbove);
+	gtk_window_set_accept_focus(GTK_WINDOW(window), this->acceptFocus);
+
+	gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+
+	Handle<Object> position = Handle<Object>::Cast(windowOpts->Get(H("position")));
+	Local<v8::Array> posProps = position->GetOwnPropertyNames(ctx).ToLocalChecked();
+	if(posProps->Length() > 0) {
+		int x = position->Get(H("x"))->IntegerValue();
+		int y = position->Get(H("y"))->IntegerValue();
+		gtk_window_move(GTK_WINDOW(window), x, y);
+	}
+	gtk_widget_show_all(window);
+
+	// need to wait until the window is shown before we can get this or it will be NULL
+	// TODO: check if we are currently in X Session to use this, by reading XDG_SESSION_TYPE environment variable
+	GdkWindow *gdkWindow = gtk_widget_get_window(GTK_WIDGET(window));
+	this->xid = GDK_WINDOW_XID(gdkWindow);
+	// Hide the window, so we can get our properties ready without the window
+	// manager trying to mess with us.
+	// gdk_window_hide(GDK_WINDOW(gdkWindow));
+	// "Can't touch this!" - to the window manager
+	//
+	// The override-redirect flag prevents the window manager taking control of
+	// anything, so the window remains in our control.  This should be enough
+	// on its own.
+	// gdk_window_set_override_redirect(GDK_WINDOW(gdkWindow), true);
+
+	if(!this->show) {
+		gdk_window_hide(GDK_WINDOW(gdkWindow));
+	}
+	// gdk_window_input_shape_combine_region(GDK_WINDOW(gdkWindow),cairo_region_create(), 0,0);
+
+	if (hasInspector) {
+		g_object_set(G_OBJECT(webkit_web_view_get_settings(view)),
+		             "enable-developer-extras", TRUE, NULL);
+		inspector = webkit_web_view_get_inspector(view);
+		g_signal_connect(inspector, "closed", G_CALLBACK(WebView::InspectorClosed),
+		                 this);
+	} else {
+		g_object_set(G_OBJECT(webkit_web_view_get_settings(view)),
+		             "enable-developer-extras", FALSE, NULL);
+	}
+
+	g_signal_connect(view, "authenticate", G_CALLBACK(WebView::Authenticate),
+	                 this);
 	g_signal_connect(view, "load-failed", G_CALLBACK(WebView::Fail), this);
 	g_signal_connect(view, "load-changed", G_CALLBACK(WebView::Change), this);
-	g_signal_connect(view, "script-dialog", G_CALLBACK(WebView::ScriptDialog), this);
-	g_signal_connect(view, "decide-policy", G_CALLBACK(WebView::DecidePolicy), this);
+	g_signal_connect(view, "script-dialog", G_CALLBACK(WebView::ScriptDialog),
+	                 this);
+	g_signal_connect(view, "decide-policy", G_CALLBACK(WebView::DecidePolicy),
+	                 this);
 
-	WebKitWindowProperties* winprops = webkit_web_view_get_window_properties(view);
-	g_signal_connect(winprops, "notify::geometry", G_CALLBACK(WebView::GeometryChanged), this);
+	WebKitWindowProperties *winprops =
+		webkit_web_view_get_window_properties(view);
+	g_signal_connect(winprops, "notify::geometry",
+	                 G_CALLBACK(WebView::GeometryChanged), this);
 }
+
+NAN_METHOD(WebView::GetXid) {
+	Nan::HandleScope scope;
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
+
+	info.GetReturnValue().Set(Nan::New<Number>(self->xid));
+}
+
+NAN_METHOD(WebView::Show) {
+	Nan::HandleScope scope;
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
+
+	GdkWindow *gdk_window = gtk_widget_get_window(GTK_WIDGET(self->window));
+	gdk_window_show(GDK_WINDOW(gdk_window));
+	self->show = TRUE;
+}
+
+NAN_METHOD(WebView::Hide) {
+	Nan::HandleScope scope;
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
+
+	GdkWindow *gdk_window = gtk_widget_get_window(GTK_WIDGET(self->window));
+	gdk_window_hide(GDK_WINDOW(gdk_window));
+	self->show = FALSE;
+}
+
 
 NAN_METHOD(WebView::ClearCache) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
-	webkit_web_context_clear_cache(self->context);
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
+#if WEBKIT_CHECK_VERSION(2, 10, 0)
+	webkit_website_data_manager_clear(
+		self->dataManager, WEBKIT_WEBSITE_DATA_COOKIES, 0, NULL, NULL, NULL);
+#else
+	webkit_cookie_manager_delete_all_cookies(
+		webkit_web_context_get_cookie_manager(self->context));
+#endif
 }
 
 NAN_METHOD(WebView::Stop) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 	bool wasLoading = FALSE;
 	if (self->loadCallback != NULL) {
 		wasLoading = TRUE;
 	}
-	if (wasLoading == TRUE) self->stopCallback = new Nan::Callback(info[0].As<Function>());
+	if (wasLoading == TRUE)
+		self->stopCallback = new Nan::Callback(info[0].As<Function>());
 	webkit_web_view_stop_loading(self->view);
 	info.GetReturnValue().Set(Nan::New<Boolean>(wasLoading));
 }
 
 NAN_METHOD(WebView::Destroy) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 	self->destroy();
 }
 
 void WebView::destroy() {
-	if (view == NULL) return;
+	if (view == NULL)
+		return;
 	unloaded();
 	if (context != NULL) {
 		g_object_unref(context);
@@ -196,24 +305,39 @@ void WebView::destroy() {
 		window = NULL;
 	}
 
-	if (uri != NULL) g_free(uri);
-	if (cacheDir != NULL) g_free(cacheDir);
-	if (extensionsDirectory != NULL) g_free(extensionsDirectory);
+	if (uri != NULL)
+		g_free(uri);
+	if (cacheDir != NULL)
+		g_free(cacheDir);
+	if (extensionsDirectory != NULL)
+		g_free(extensionsDirectory);
 
-	if (pngCallback != NULL) delete pngCallback;
-	if (pngFilename != NULL) delete pngFilename;
+	if (pngCallback != NULL)
+		delete pngCallback;
+	if (pngFilename != NULL)
+		delete pngFilename;
 
-	if (printCallback != NULL) delete printCallback;
-	if (printUri != NULL) delete printUri;
+	if (printCallback != NULL)
+		delete printCallback;
+	if (printUri != NULL)
+		delete printUri;
 
-	if (loadCallback != NULL) delete loadCallback;
-	if (stopCallback != NULL) delete stopCallback;
-	if (receiveDataCallback != NULL) delete receiveDataCallback;
-	if (responseCallback != NULL) delete responseCallback;
-	if (policyCallback != NULL) delete policyCallback;
-	if (eventsCallback != NULL) delete eventsCallback;
-	if (authCallback != NULL) delete authCallback;
-	if (closeCallback != NULL) delete closeCallback;
+	if (loadCallback != NULL)
+		delete loadCallback;
+	if (stopCallback != NULL)
+		delete stopCallback;
+	if (receiveDataCallback != NULL)
+		delete receiveDataCallback;
+	if (responseCallback != NULL)
+		delete responseCallback;
+	if (policyCallback != NULL)
+		delete policyCallback;
+	if (eventsCallback != NULL)
+		delete eventsCallback;
+	if (authCallback != NULL)
+		delete authCallback;
+	if (closeCallback != NULL)
+		delete closeCallback;
 	instances.erase(cstamp);
 	if (instances.size() == 0) {
 		uv_timer_stop(timeout_handle);
@@ -224,14 +348,15 @@ WebView::~WebView() {
 	destroy();
 }
 
-
 void WebView::unloaded() {
-	if (view == NULL) return;
+	if (view == NULL)
+		return;
 	if (idResourceResponse > 0) {
 		g_signal_handler_disconnect(view, idResourceResponse);
 		idResourceResponse = 0;
 	}
-	WebKitUserContentManager* contman = webkit_web_view_get_user_content_manager(view);
+	WebKitUserContentManager *contman =
+		webkit_web_view_get_user_content_manager(view);
 	if (idEventsHandler > 0) {
 		g_signal_handler_disconnect(contman, idEventsHandler);
 		idEventsHandler = 0;
@@ -239,7 +364,8 @@ void WebView::unloaded() {
 	if (contman != NULL) {
 		webkit_user_content_manager_remove_all_scripts(contman);
 		webkit_user_content_manager_remove_all_style_sheets(contman);
-		webkit_user_content_manager_unregister_script_message_handler(contman, "events");
+		webkit_user_content_manager_unregister_script_message_handler(contman,
+		                                                              "events");
 	}
 }
 
@@ -259,6 +385,9 @@ void WebView::Init(Handle<Object> exports, Handle<Object> module) {
 	Nan::SetPrototypeMethod(tpl, "stop", WebView::Stop);
 	Nan::SetPrototypeMethod(tpl, "destroy", WebView::Destroy);
 	Nan::SetPrototypeMethod(tpl, "inspect", WebView::Inspect);
+	Nan::SetPrototypeMethod(tpl, "getXid", WebView::GetXid);
+	Nan::SetPrototypeMethod(tpl, "show", WebView::Show);
+	Nan::SetPrototypeMethod(tpl, "hide", WebView::Hide);
 
 	ATTR(tpl, "uri", get_prop, NULL);
 
@@ -274,41 +403,49 @@ void WebView::Init(Handle<Object> exports, Handle<Object> module) {
 	uv_timer_init(uv_default_loop(), timeout_handle);
 }
 
-void WebView::InspectorClosed(WebKitWebInspector* inspector, gpointer data) {
-	WebView* self = (WebView*)data;
+void WebView::InspectorClosed(WebKitWebInspector *inspector, gpointer data) {
+	WebView *self = (WebView *)data;
 	Nan::HandleScope scope;
-	Local<Value> argv[] = { Nan::New<String>("inspector").ToLocalChecked() };
+	Local<Value> argv[] = {Nan::New<String>("inspector").ToLocalChecked()};
 	self->closeCallback->Call(1, argv);
 }
 
-void WebView::WindowClosed(GtkWidget* window, gpointer data) {
+void WebView::WindowClosed(GtkWidget *window, gpointer data) {
 	// wait until window has finished closing
 	while (gtk_events_pending()) {
 		gtk_main_iteration_do(true);
 	}
-	WebView* self = (WebView*)data;
+	WebView *self = (WebView *)data;
 	self->window = NULL;
 	Nan::HandleScope scope;
-	Local<Value> argv[] = { Nan::New<String>("window").ToLocalChecked() };
+	Local<Value> argv[] = {Nan::New<String>("window").ToLocalChecked()};
 	self->closeCallback->Call(1, argv);
 }
 
-gboolean WebView::Authenticate(WebKitWebView* view, WebKitAuthenticationRequest* request, gpointer data) {
-	WebView* self = (WebView*)data;
-	if (webkit_authentication_request_is_retry(request)) return TRUE;
+gboolean WebView::Authenticate(WebKitWebView *view,
+                               WebKitAuthenticationRequest *request,
+                               gpointer data) {
+	WebView *self = (WebView *)data;
+	if (webkit_authentication_request_is_retry(request))
+		return TRUE;
 
-	// WebKitCredential* savedCred = webkit_authentication_request_get_proposed_credential(request);
-	// if (savedCred != NULL) {
-		// g_log("saved cred %s\n", webkit_credential_get_username(savedCred));
-		// webkit_authentication_request_authenticate(request, savedCred);
-		// return TRUE;
+	// WebKitCredential* savedCred =
+	// webkit_authentication_request_get_proposed_credential(request); if
+	// (savedCred != NULL) { g_log("saved cred %s\n",
+	// webkit_credential_get_username(savedCred));
+	// webkit_authentication_request_authenticate(request, savedCred);
+	// return TRUE;
 	// }
 	Nan::HandleScope scope;
-	Local<Object> obj = Nan::NewInstance(Nan::GetFunction(Nan::New(WebAuthRequest::constructor)).ToLocalChecked()).ToLocalChecked();
-	WebAuthRequest* selfAuthRequest = node::ObjectWrap::Unwrap<WebAuthRequest>(obj);
+	Local<Object> obj =
+		Nan::NewInstance(Nan::GetFunction(Nan::New(WebAuthRequest::constructor))
+		                 .ToLocalChecked())
+		.ToLocalChecked();
+	WebAuthRequest *selfAuthRequest =
+		node::ObjectWrap::Unwrap<WebAuthRequest>(obj);
 	selfAuthRequest->init(request);
 
-	Local<Value> argv[] = { obj };
+	Local<Value> argv[] = {obj};
 	Local<Value> ignore = self->authCallback->Call(1, argv);
 	if (ignore->IsBoolean() && ignore->BooleanValue() == true) {
 		webkit_authentication_request_authenticate(request, NULL);
@@ -316,27 +453,35 @@ gboolean WebView::Authenticate(WebKitWebView* view, WebKitAuthenticationRequest*
 	return TRUE;
 }
 
-void WebView::InitExtensions(WebKitWebContext* context, gpointer data) {
-	WebView* self = (WebView*)data;
+void WebView::InitExtensions(WebKitWebContext *context, gpointer data) {
+	WebView *self = (WebView *)data;
 	if (self->contextSignalId) {
 		g_signal_handler_disconnect(context, self->contextSignalId);
 		self->contextSignalId = 0;
 	}
-	webkit_web_context_set_web_extensions_directory(context, self->extensionsDirectory);
-	GVariant* userData = g_variant_new("(s)", self->cstamp);
-	webkit_web_context_set_web_extensions_initialization_user_data(context, userData);
+	webkit_web_context_set_web_extensions_directory(context,
+	                                                self->extensionsDirectory);
+	GVariant *userData = g_variant_new("(s)", self->cstamp);
+	webkit_web_context_set_web_extensions_initialization_user_data(context,
+	                                                               userData);
 }
 
-gboolean WebView::DecidePolicy(WebKitWebView* web_view, WebKitPolicyDecision* decision, WebKitPolicyDecisionType type, gpointer data) {
+gboolean WebView::DecidePolicy(WebKitWebView *web_view,
+                               WebKitPolicyDecision *decision,
+                               WebKitPolicyDecisionType type, gpointer data) {
 	Nan::HandleScope scope;
-	WebView* self = (WebView*)data;
+	WebView *self = (WebView *)data;
 	if (type == WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION) {
-		WebKitNavigationPolicyDecision* navDecision = WEBKIT_NAVIGATION_POLICY_DECISION(decision);
-		WebKitNavigationAction* navAction = webkit_navigation_policy_decision_get_navigation_action(navDecision);
-		WebKitURIRequest* navRequest = webkit_navigation_action_get_request(navAction);
-		Local<String> uri = Nan::New<String>(webkit_uri_request_get_uri(navRequest)).ToLocalChecked();
+		WebKitNavigationPolicyDecision *navDecision =
+			WEBKIT_NAVIGATION_POLICY_DECISION(decision);
+		WebKitNavigationAction *navAction =
+			webkit_navigation_policy_decision_get_navigation_action(navDecision);
+		WebKitURIRequest *navRequest =
+			webkit_navigation_action_get_request(navAction);
+		Local<String> uri = Nan::New<String>(webkit_uri_request_get_uri(navRequest))
+		                    .ToLocalChecked();
 		Local<String> type = Nan::New<String>("navigation").ToLocalChecked();
-		Local<Value> argv[] = { type, uri };
+		Local<Value> argv[] = {type, uri};
 		Local<Value> ignore = self->policyCallback->Call(2, argv);
 		if (ignore->IsBoolean() && ignore->BooleanValue() == true) {
 			webkit_policy_decision_ignore(decision);
@@ -346,13 +491,16 @@ gboolean WebView::DecidePolicy(WebKitWebView* web_view, WebKitPolicyDecision* de
 		// ignore for now
 		webkit_policy_decision_ignore(decision);
 		return TRUE;
-		// WebKitNavigationPolicyDecision* navDecision = WEBKIT_NAVIGATION_POLICY_DECISION(decision);
-		// WebKitURIRequest* navRequest = webkit_navigation_policy_decision_get_request(navDecision);
-		// const gchar* uri = webkit_uri_request_get_uri(navRequest);
-		// g_log("policy new window decision for\n%s\n", uri);
+		// WebKitNavigationPolicyDecision* navDecision =
+		// WEBKIT_NAVIGATION_POLICY_DECISION(decision); WebKitURIRequest* navRequest
+		// = webkit_navigation_policy_decision_get_request(navDecision); const
+		// gchar* uri = webkit_uri_request_get_uri(navRequest); g_log("policy new
+		// window decision for\n%s\n", uri);
 	} else if (type == WEBKIT_POLICY_DECISION_TYPE_RESPONSE) {
-		WebKitResponsePolicyDecision* resDecision = WEBKIT_RESPONSE_POLICY_DECISION(decision);
-		if (webkit_response_policy_decision_is_mime_type_supported(resDecision) == FALSE) {
+		WebKitResponsePolicyDecision *resDecision =
+			WEBKIT_RESPONSE_POLICY_DECISION(decision);
+		if (webkit_response_policy_decision_is_mime_type_supported(resDecision) ==
+		    FALSE) {
 			// requests are not expected to be cancelled
 			return TRUE;
 		}
@@ -360,85 +508,101 @@ gboolean WebView::DecidePolicy(WebKitWebView* web_view, WebKitPolicyDecision* de
 	return FALSE;
 }
 
-void WebView::handleEventMessage(WebKitUserContentManager* contman, WebKitJavascriptResult* js_result, gpointer data) {
-	if (data == NULL) return;
-	ViewClosure* vc = (ViewClosure*)data;
-	if (vc->closure == NULL) return;
-	WebView* self = (WebView*)(vc->view);
-	JSGlobalContextRef context = webkit_javascript_result_get_global_context(js_result);
+void WebView::handleEventMessage(WebKitUserContentManager *contman,
+                                 WebKitJavascriptResult *js_result,
+                                 gpointer data) {
+	if (data == NULL)
+		return;
+	ViewClosure *vc = (ViewClosure *)data;
+	if (vc->closure == NULL)
+		return;
+	WebView *self = (WebView *)(vc->view);
+	JSGlobalContextRef context =
+		webkit_javascript_result_get_global_context(js_result);
 	JSValueRef value = webkit_javascript_result_get_value(js_result);
-	gchar* str_value = NULL;
+	gchar *str_value = NULL;
 	Nan::HandleScope scope;
 	if (JSValueIsString(context, value)) {
 		JSStringRef js_str_value = JSValueToStringCopy(context, value, NULL);
 		gsize str_length = JSStringGetMaximumUTF8CStringSize(js_str_value);
-		str_value = (gchar*)g_malloc(str_length);
+		str_value = (gchar *)g_malloc(str_length);
 		JSStringGetUTF8CString(js_str_value, str_value, str_length);
 		JSStringRelease(js_str_value);
-		Local<Value> argv[] = {
-			Nan::Null(),
-			Nan::New<String>(str_value).ToLocalChecked()
-		};
+		Local<Value> argv[] = {Nan::Null(),
+			               Nan::New<String>(str_value).ToLocalChecked()};
 		self->eventsCallback->Call(2, argv);
 	} else {
 		g_warning("Error in script message handler: unexpected js_result value");
 	}
-	if (str_value != NULL) g_free(str_value);
+	if (str_value != NULL)
+		g_free(str_value);
 	webkit_javascript_result_unref(js_result);
 }
 
-void WebView::ResourceLoad(WebKitWebView* web_view, WebKitWebResource* resource, WebKitURIRequest* request, gpointer data) {
-	g_signal_connect(resource, "finished", G_CALLBACK(WebView::ResourceResponse), data);
-	g_signal_connect(resource, "received-data", G_CALLBACK(WebView::ResourceReceiveData), data);
+void WebView::ResourceLoad(WebKitWebView *web_view, WebKitWebResource *resource,
+                           WebKitURIRequest *request, gpointer data) {
+	g_signal_connect(resource, "finished", G_CALLBACK(WebView::ResourceResponse),
+	                 data);
+	g_signal_connect(resource, "received-data",
+	                 G_CALLBACK(WebView::ResourceReceiveData), data);
 }
 
-void WebView::ResourceReceiveData(WebKitWebResource* resource, guint64 length, gpointer data) {
-	if (data == NULL) return;
-	ViewClosure* vc = (ViewClosure*)data;
-	if (vc->closure == NULL) return;
-	WebView* self = (WebView*)(vc->view);
-	WebKitURIResponse* response = webkit_web_resource_get_response(resource);
+void WebView::ResourceReceiveData(WebKitWebResource *resource, guint64 length,
+                                  gpointer data) {
+	if (data == NULL)
+		return;
+	ViewClosure *vc = (ViewClosure *)data;
+	if (vc->closure == NULL)
+		return;
+	WebView *self = (WebView *)(vc->view);
+	WebKitURIResponse *response = webkit_web_resource_get_response(resource);
 	Nan::HandleScope scope;
-	Local<Object> obj = Nan::NewInstance(Nan::GetFunction(Nan::New(WebResponse::constructor)).ToLocalChecked()).ToLocalChecked();
-	WebResponse* selfResponse = node::ObjectWrap::Unwrap<WebResponse>(obj);
+	Local<Object> obj =
+		Nan::NewInstance(
+			Nan::GetFunction(Nan::New(WebResponse::constructor)).ToLocalChecked())
+		.ToLocalChecked();
+	WebResponse *selfResponse = node::ObjectWrap::Unwrap<WebResponse>(obj);
 	selfResponse->init(resource, response);
 
 	int argc = 3;
-	Local<Value> argv[] = {
-		Nan::New<String>((char*)vc->closure).ToLocalChecked(),
-		obj,
-		Nan::New<Integer>((int)length)
-	};
+	Local<Value> argv[] = {Nan::New<String>((char *)vc->closure).ToLocalChecked(),
+		               obj, Nan::New<Integer>((int)length)};
 	self->receiveDataCallback->Call(argc, argv);
 }
 
-void WebView::ResourceResponse(WebKitWebResource* resource, gpointer data) {
-	if (data == NULL) return;
-	ViewClosure* vc = (ViewClosure*)data;
-	if (vc->closure == NULL) return;
-	WebView* self = (WebView*)(vc->view);
-	WebKitURIResponse* response = webkit_web_resource_get_response(resource);
+void WebView::ResourceResponse(WebKitWebResource *resource, gpointer data) {
+	if (data == NULL)
+		return;
+	ViewClosure *vc = (ViewClosure *)data;
+	if (vc->closure == NULL)
+		return;
+	WebView *self = (WebView *)(vc->view);
+	WebKitURIResponse *response = webkit_web_resource_get_response(resource);
 	Nan::HandleScope scope;
-	Local<Object> obj = Nan::NewInstance(Nan::GetFunction(Nan::New(WebResponse::constructor)).ToLocalChecked()).ToLocalChecked();
-	WebResponse* selfResponse = node::ObjectWrap::Unwrap<WebResponse>(obj);
+	Local<Object> obj =
+		Nan::NewInstance(
+			Nan::GetFunction(Nan::New(WebResponse::constructor)).ToLocalChecked())
+		.ToLocalChecked();
+	WebResponse *selfResponse = node::ObjectWrap::Unwrap<WebResponse>(obj);
 	selfResponse->init(resource, response);
 	int argc = 2;
-	Local<Value> argv[] = {
-		Nan::New<String>((char*)vc->closure).ToLocalChecked(),
-		obj
-	};
+	Local<Value> argv[] = {Nan::New<String>((char *)vc->closure).ToLocalChecked(),
+		               obj};
 	self->responseCallback->Call(argc, argv);
 }
 
-gboolean WebView::ScriptDialog(WebKitWebView* web_view, WebKitScriptDialog* dialog, WebView* self) {
-	if (!self->allowDialogs) return TRUE;
-	else return FALSE;
+gboolean WebView::ScriptDialog(WebKitWebView *web_view,
+                               WebKitScriptDialog *dialog, WebView *self) {
+	if (!self->allowDialogs)
+		return TRUE;
+	else
+		return FALSE;
 }
 
-guint getStatusFromView(WebKitWebView* web_view) {
-	WebKitWebResource* resource = webkit_web_view_get_main_resource(web_view);
+guint getStatusFromView(WebKitWebView *web_view) {
+	WebKitWebResource *resource = webkit_web_view_get_main_resource(web_view);
 	if (resource != NULL) {
-		WebKitURIResponse* response = webkit_web_resource_get_response(resource);
+		WebKitURIResponse *response = webkit_web_resource_get_response(resource);
 		if (response != NULL) {
 			return webkit_uri_response_get_status_code(response);
 		}
@@ -446,91 +610,93 @@ guint getStatusFromView(WebKitWebView* web_view) {
 	return 0;
 }
 
-void WebView::updateUri(const gchar* uri) {
+void WebView::updateUri(const gchar *uri) {
 	if (uri != NULL) {
-		if (this->uri != NULL) g_free(this->uri);
+		if (this->uri != NULL)
+			g_free(this->uri);
 		this->uri = g_strdup(uri);
 	}
 }
 
-void WebView::Change(WebKitWebView* web_view, WebKitLoadEvent load_event, gpointer data) {
-	WebView* self = (WebView*)data;
+void WebView::Change(WebKitWebView *web_view, WebKitLoadEvent load_event,
+                     gpointer data) {
+	WebView *self = (WebView *)data;
 	Nan::HandleScope scope;
-	Nan::Callback* cb;
-	const gchar* uri = webkit_web_view_get_uri(web_view);
-//	g_log("change %d %d %s %s\n", load_event, self->state, self->uri, uri);
+	Nan::Callback *cb;
+
+	const gchar *uri = webkit_web_view_get_uri(web_view);
+	//	g_log("change %d %d %s %s\n", load_event, self->state, self->uri, uri);
 	switch (load_event) {
-		case WEBKIT_LOAD_STARTED: // 0
-			/* New load, we have now a provisional URI */
-			// provisional_uri = webkit_web_view_get_uri (web_view);
-			/* Here we could start a spinner or update the
-			* location bar with the provisional URI */
-			self->state = DOCUMENT_LOADING;
+	case WEBKIT_LOAD_STARTED: // 0
+		/* New load, we have now a provisional URI */
+		// provisional_uri = webkit_web_view_get_uri (web_view);
+		/* Here we could start a spinner or update the
+		 * location bar with the provisional URI */
+		self->state = DOCUMENT_LOADING;
+		self->updateUri(uri);
+		break;
+	case WEBKIT_LOAD_REDIRECTED: // 1
+		// redirected_uri = webkit_web_view_get_uri (web_view);
+		if (self->state == DOCUMENT_LOADING)
 			self->updateUri(uri);
 		break;
-		case WEBKIT_LOAD_REDIRECTED: // 1
-			// redirected_uri = webkit_web_view_get_uri (web_view);
-			if (self->state == DOCUMENT_LOADING) self->updateUri(uri);
-		break;
-		case WEBKIT_LOAD_COMMITTED: // 2
-			/* The load is being performed. Current URI is
-			* the final one and it won't change unless a new
-			* load is requested or a navigation within the
-			* same page is performed */
-			if (self->state == DOCUMENT_LOADING) {
-				self->state = DOCUMENT_LOADED;
-				self->updateUri(uri);
-				if (self->loadCallback != NULL && self->waitFinish == FALSE && self->stopCallback == NULL) {
-					guint status = getStatusFromView(web_view);
-					if (status == 0 && self->userContent == TRUE) status = 200;
-					Local<Value> argv[] = {
-						Nan::Null(),
-						Nan::New<Integer>(status)
-					};
-					cb = self->loadCallback;
-					self->loadCallback = NULL;
-					cb->Call(2, argv);
-					delete cb;
-				}
-			}
-		break;
-		case WEBKIT_LOAD_FINISHED: // 3
-			self->state = DOCUMENT_AVAILABLE;
-			if (self->loadCallback != NULL && self->waitFinish == TRUE) {
+	case WEBKIT_LOAD_COMMITTED: // 2
+		/* The load is being performed. Current URI is
+		 * the final one and it won't change unless a new
+		 * load is requested or a navigation within the
+		 * same page is performed */
+		if (self->state == DOCUMENT_LOADING) {
+			self->state = DOCUMENT_LOADED;
+			self->updateUri(uri);
+			if (self->loadCallback != NULL && self->waitFinish == FALSE &&
+			    self->stopCallback == NULL) {
 				guint status = getStatusFromView(web_view);
-				if (status == 0 && self->userContent == TRUE) status = 200;
-				Local<Value> argv[] = {
-					Nan::Null(),
-					Nan::New<Integer>(status)
-				};
+				if (status == 0 && self->userContent == TRUE)
+					status = 200;
+				Local<Value> argv[] = {Nan::Null(), Nan::New<Integer>(status)};
 				cb = self->loadCallback;
 				self->loadCallback = NULL;
 				cb->Call(2, argv);
 				delete cb;
 			}
-			if (self->stopCallback != NULL) {
-				Local<Value> argvstop[] = {};
-				cb = self->stopCallback;
-				self->stopCallback = NULL;
-				cb->Call(0, argvstop);
-				delete cb;
-			}
+		}
+		break;
+	case WEBKIT_LOAD_FINISHED: // 3
+		self->state = DOCUMENT_AVAILABLE;
+		if (self->loadCallback != NULL && self->waitFinish == TRUE) {
+			guint status = getStatusFromView(web_view);
+			if (status == 0 && self->userContent == TRUE)
+				status = 200;
+			Local<Value> argv[] = {Nan::Null(), Nan::New<Integer>(status)};
+			cb = self->loadCallback;
+			self->loadCallback = NULL;
+			cb->Call(2, argv);
+			delete cb;
+		}
+		if (self->stopCallback != NULL) {
+			Local<Value> argvstop[] = {};
+			cb = self->stopCallback;
+			self->stopCallback = NULL;
+			cb->Call(0, argvstop);
+			delete cb;
+		}
 		break;
 	}
 }
 
-gboolean WebView::Fail(WebKitWebView* web_view, WebKitLoadEvent load_event, gchar* failing_uri, GError* error, gpointer data) {
-	WebView* self = (WebView*)data;
+gboolean WebView::Fail(WebKitWebView *web_view, WebKitLoadEvent load_event,
+                       gchar *failing_uri, GError *error, gpointer data) {
+	WebView *self = (WebView *)data;
 	Nan::HandleScope scope;
-	Nan::Callback* cb;
-//  g_log("fail %d %d %s %s\n", load_event, self->state, self->uri, failing_uri);
-	if (self->state >= DOCUMENT_LOADING && g_strcmp0(failing_uri, self->uri) == 0) {
+	Nan::Callback *cb;
+	//  g_log("fail %d %d %s %s\n", load_event, self->state, self->uri,
+	//  failing_uri);
+	if (self->state >= DOCUMENT_LOADING &&
+	    g_strcmp0(failing_uri, self->uri) == 0) {
 		if (self->loadCallback != NULL) {
 			self->state = DOCUMENT_ERROR;
-			Local<Value> argv[] = {
-				Nan::Error(error->message),
-				Nan::New<Integer>(getStatusFromView(web_view))
-			};
+			Local<Value> argv[] = {Nan::Error(error->message),
+				               Nan::New<Integer>(getStatusFromView(web_view))};
 			cb = self->loadCallback;
 			self->loadCallback = NULL;
 			cb->Call(2, argv);
@@ -544,25 +710,24 @@ gboolean WebView::Fail(WebKitWebView* web_view, WebKitLoadEvent load_event, gcha
 
 NAN_METHOD(WebView::New) {
 	Nan::HandleScope scope;
-	WebView* self = new WebView(info[0]->ToObject());
+	WebView *self = new WebView(info[0]->ToObject());
 	self->Wrap(info.This());
 	info.GetReturnValue().Set(info.This());
 }
 
 NAN_METHOD(WebView::Load) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
-
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
+	Isolate* isolate = info.GetIsolate();
+	Local<Context> context = isolate->GetCurrentContext();
 	if (!info[3]->IsFunction()) {
 		Nan::ThrowError("load(uri, opts, cb) missing cb argument");
 		return;
 	}
-	Nan::Callback* loadCb = new Nan::Callback(info[3].As<Function>());
+	Nan::Callback *loadCb = new Nan::Callback(info[3].As<Function>());
 
 	if (self->state == DOCUMENT_LOADING) {
-		Local<Value> argv[] = {
-			Nan::Error("A document is already being loaded")
-		};
+		Local<Value> argv[] = {Nan::Error("A document is already being loaded")};
 		if (loadCb != NULL) {
 			loadCb->Call(1, argv);
 			delete loadCb;
@@ -581,57 +746,67 @@ NAN_METHOD(WebView::Load) {
 		return;
 	}
 
-	Nan::Utf8String* uri = new Nan::Utf8String(info[0]);
+	Nan::Utf8String *uri = new Nan::Utf8String(info[0]);
 
 	Local<Object> opts = info[2]->ToObject();
 
 	if (NanBooleanOptionValue(opts, H("transparent"), false) == TRUE) {
 		if (self->transparencySupport == FALSE) {
-			g_warning("Background cannot be transparent: rgba visual not found and/or webkitgtk >= 2.7.4 required");
+			g_warning("Background cannot be transparent: rgba visual not found "
+			          "and/or webkitgtk >= 2.7.4 required");
 		} else {
-	#if WEBKIT_CHECK_VERSION(2,7,4)
+#if WEBKIT_CHECK_VERSION(2, 7, 4)
 			static const GdkRGBA transparent = {.0, .0, .0, .0};
 			webkit_web_view_set_background_color(self->view, &transparent);
-	#endif
+#endif
 		}
 	} else {
-	#if WEBKIT_CHECK_VERSION(2,7,4)
+#if WEBKIT_CHECK_VERSION(2, 7, 4)
 		static const GdkRGBA opaque = {1.0, 1.0, 1.0, 1.0};
 		webkit_web_view_set_background_color(self->view, &opaque);
-	#endif
+#endif
 		// nothing to do
 	}
 	// default to decorated if not offscreen
 	if (!self->offscreen) {
-		gtk_window_set_decorated(GTK_WINDOW(self->window), NanBooleanOptionValue(opts, H("decorated"), TRUE));
+		gtk_window_set_decorated(GTK_WINDOW(self->window),
+		                         NanBooleanOptionValue(opts, H("decorated"), TRUE));
 	}
 
-	int w = NanUInt32OptionValue(opts, H("width"), 1024);
-	int h = NanUInt32OptionValue(opts, H("height"), 768);
-	gtk_window_set_default_size(GTK_WINDOW(self->window), w, h);
-	gtk_window_resize(GTK_WINDOW(self->window), w, h);
+	Handle<Object> windowOpts = Handle<Object>::Cast(opts->Get(H("window")));
 
-	WebKitSettings* settings = webkit_web_view_get_settings(self->view);
+	int w = NanUInt32OptionValue(windowOpts, H("width"), 1024);
+	int h = NanUInt32OptionValue(windowOpts, H("height"), 768);
+
+	gtk_window_resize(GTK_WINDOW(self->window), w,
+	                  h);
+	int new_width, new_height;
+	gtk_window_get_size (GTK_WINDOW(self->window), &new_width, &new_height);
+
+  #pragma message("TODO: window do not want to resize lower than 200 :: " __FILE__ )
+	if(new_width != w || new_height != h) {
+		g_warning("size cannot be applied width=%d height=%d\n", w, h);
+		// gtk_widget_queue_resize(GTK_WIDGET(self->window));
+		// gtk_widget_set_size_request(GTK_WIDGET(self->window), h, w);
+	}
+	WebKitSettings *settings = webkit_web_view_get_settings(self->view);
 
 	// sane defaults for headless usage
-	g_object_set(settings,
-		"enable-plugins", FALSE,
-		"enable-html5-database", FALSE,
-		"enable-html5-local-storage", FALSE,
-		"enable-java", FALSE,
-		"enable-page-cache", FALSE,
-		"enable-offline-web-application-cache", FALSE,
-		NULL
-	);
+	g_object_set(settings, "enable-plugins", FALSE, "enable-html5-database",
+	             TRUE, "enable-html5-local-storage", FALSE, "enable-java", FALSE,
+	             "enable-page-cache", FALSE,
+	             "enable-offline-web-application-cache", FALSE, "enable-webgl",TRUE,
+	             "allow-universal-access-from-file-urls",TRUE,NULL);
 
 	Local<v8::Array> optsProps = Nan::GetOwnPropertyNames(opts).ToLocalChecked();
 	Local<v8::Value> optsName;
 	Local<v8::Value> optsVal;
-	GParamSpec* spec;
+	GParamSpec *spec;
 	for (guint optsIndex = 0; optsIndex < optsProps->Length(); optsIndex++) {
 		optsName = Nan::Get(optsProps, optsIndex).ToLocalChecked();
-		gchar* optsNameStr = *(Nan::Utf8String(optsName));
-		spec = g_object_class_find_property(G_OBJECT_GET_CLASS(settings), optsNameStr);
+		gchar *optsNameStr = *(Nan::Utf8String(optsName));
+		spec =
+			g_object_class_find_property(G_OBJECT_GET_CLASS(settings), optsNameStr);
 		if (spec != NULL) {
 			optsVal = Nan::Get(opts, optsName).ToLocalChecked();
 			if (G_IS_PARAM_SPEC_BOOLEAN(spec) && optsVal->IsBoolean()) {
@@ -653,61 +828,59 @@ NAN_METHOD(WebView::Load) {
 		delete self->loadCallback;
 	}
 
-	if (self->state == DOCUMENT_LOADED) webkit_web_view_stop_loading(self->view);
+	if (self->state == DOCUMENT_LOADED)
+		webkit_web_view_stop_loading(self->view);
 
 	self->unloaded();
 
 	self->loadCallback = loadCb;
 
 	if (NanBooleanOptionValue(opts, H("clearCookies"), FALSE)) {
-		webkit_cookie_manager_delete_all_cookies(webkit_web_context_get_cookie_manager(self->context));
+#if WEBKIT_CHECK_VERSION(2, 10, 0)
+		webkit_website_data_manager_clear(
+			self->dataManager, WEBKIT_WEBSITE_DATA_COOKIES, 0, NULL, NULL, NULL);
+#else
+		webkit_cookie_manager_delete_all_cookies(
+			webkit_web_context_get_cookie_manager(self->context));
+#endif
 	}
 
-	WebKitUserContentManager* contman = webkit_web_view_get_user_content_manager(self->view);
+	WebKitUserContentManager *contman =
+		webkit_web_view_get_user_content_manager(self->view);
 
-	ViewClosure* vc = new ViewClosure(self, info[1]->IsString() ? **(new Nan::Utf8String(info[1])) : NULL);
+	ViewClosure *vc = new ViewClosure(
+		self, info[1]->IsString() ? **(new Nan::Utf8String(info[1])) : NULL);
 
-	self->idEventsHandler = g_signal_connect(
-		contman,
-		"script-message-received::events",
-		G_CALLBACK(WebView::handleEventMessage),
-		vc
-	);
+	self->idEventsHandler =
+		g_signal_connect(contman, "script-message-received::events",
+		                 G_CALLBACK(WebView::handleEventMessage), vc);
 
-	webkit_user_content_manager_register_script_message_handler(contman, "events");
+	webkit_user_content_manager_register_script_message_handler(contman,
+	                                                            "events");
 
-	self->idResourceResponse = g_signal_connect(
-		self->view,
-		"resource-load-started",
-		G_CALLBACK(WebView::ResourceLoad),
-		vc
-	);
+	self->idResourceResponse =
+		g_signal_connect(self->view, "resource-load-started",
+		                 G_CALLBACK(WebView::ResourceLoad), vc);
 
 	self->state = DOCUMENT_LOADING;
 	self->updateUri(**uri);
 
-	Nan::Utf8String* script = getOptStr(opts, "script");
+	Nan::Utf8String *script = getOptStr(opts, "script");
 	if (script->length() > 0) {
 		self->userScript = webkit_user_script_new(
-			**script,
-			WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
-			WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START,
-			NULL, NULL
-		);
+			**script, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
+			WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
 		webkit_user_content_manager_add_script(contman, self->userScript);
 		webkit_user_script_unref(self->userScript);
 		self->userScript = NULL;
 		script = NULL;
 	}
 
-	Nan::Utf8String* style = getOptStr(opts, "style");
+	Nan::Utf8String *style = getOptStr(opts, "style");
 	if (style->length() > 0) {
 		self->userStyleSheet = webkit_user_style_sheet_new(
-			**style,
-			WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
-			WEBKIT_USER_STYLE_LEVEL_USER,
-			NULL, NULL
-		);
+			**style, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
+			WEBKIT_USER_STYLE_LEVEL_USER, NULL, NULL);
 		webkit_user_content_manager_add_style_sheet(contman, self->userStyleSheet);
 		webkit_user_style_sheet_unref(self->userStyleSheet);
 		self->userStyleSheet = NULL;
@@ -715,7 +888,7 @@ NAN_METHOD(WebView::Load) {
 	}
 	self->waitFinish = NanBooleanOptionValue(opts, H("waitFinish"), FALSE);
 
-	Nan::Utf8String* content = getOptStr(opts, "content");
+	Nan::Utf8String *content = getOptStr(opts, "content");
 
 	gboolean isEmpty = g_strcmp0(**uri, "") == 0;
 
@@ -726,11 +899,8 @@ NAN_METHOD(WebView::Load) {
 			self->uri = NULL;
 		}
 		webkit_web_view_load_bytes(
-			self->view,
-			g_bytes_new_take(**content, content->length()), "text/html",
-			webkit_settings_get_default_charset(settings),
-			self->uri
-		);
+			self->view, g_bytes_new_take(**content, content->length()), "text/html",
+			webkit_settings_get_default_charset(settings), self->uri);
 	} else {
 		self->userContent = FALSE;
 		webkit_web_view_load_uri(self->view, self->uri);
@@ -739,32 +909,37 @@ NAN_METHOD(WebView::Load) {
 	return;
 }
 
-void WebView::GeometryChanged(WebKitWindowProperties* properties, GParamSpec* pspec, gpointer data) {
-	WebView* self = (WebView*)data;
-	if (self->resizing == FALSE) return;
+void WebView::GeometryChanged(WebKitWindowProperties *properties,
+                              GParamSpec *pspec, gpointer data) {
+	WebView *self = (WebView *)data;
+
+	if (self->resizing == FALSE)
+		return;
 	GdkRectangle geometry;
 	webkit_window_properties_get_geometry(properties, &geometry);
+	g_info("geometry changed width=%d height=%d\n",geometry.width,geometry.height);
 	if (geometry.x >= 0 && geometry.y >= 0) {
 		gtk_window_move(GTK_WINDOW(self->window), geometry.x, geometry.y);
 	}
 
 	if (geometry.width > 0 && geometry.height > 0) {
-		gtk_window_resize(GTK_WINDOW(self->window), geometry.width, geometry.height);
+		gtk_window_resize(GTK_WINDOW(self->window), geometry.width,
+		                  geometry.height);
 	}
 }
 
-void WebView::RunFinished(GObject* object, GAsyncResult* result, gpointer data) {
-	GError* error = NULL;
-	ViewClosure* vc = (ViewClosure*)data;
-	WebView* self = (WebView*)(vc->view);
-	WebKitJavascriptResult* js_result = webkit_web_view_run_javascript_finish(WEBKIT_WEB_VIEW(object), result, &error);
-	if (js_result == NULL) { // if NULL, error is defined
+void WebView::RunFinished(GObject *object, GAsyncResult *result,
+                          gpointer data) {
+	GError *error = NULL;
+	ViewClosure *vc = (ViewClosure *)data;
+	WebView *self = (WebView *)(vc->view);
+	WebKitJavascriptResult *js_result = webkit_web_view_run_javascript_finish(
+		WEBKIT_WEB_VIEW(object), result, &error);
+	if (js_result == NULL) {                                                                                                                 // if NULL, error is defined
 		Nan::HandleScope scope;
-		Nan::Utf8String* nStr = (Nan::Utf8String*)(vc->closure);
-		Local<Value> argv[] = {
-			Nan::Error(error->message),
-			Nan::New<String>(**nStr).ToLocalChecked()
-		};
+		Nan::Utf8String *nStr = (Nan::Utf8String *)(vc->closure);
+		Local<Value> argv[] = {Nan::Error(error->message),
+			               Nan::New<String>(**nStr).ToLocalChecked()};
 		self->eventsCallback->Call(2, argv);
 		g_error_free(error);
 		delete nStr;
@@ -776,44 +951,41 @@ void WebView::RunFinished(GObject* object, GAsyncResult* result, gpointer data) 
 
 NAN_METHOD(WebView::Run) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 	if (!info[0]->IsString()) {
 		Nan::ThrowError("run(script, ticket) missing script argument");
 		return;
 	}
 
-	Nan::Utf8String* script = new Nan::Utf8String(info[0]);
+	Nan::Utf8String *script = new Nan::Utf8String(info[0]);
 
-	ViewClosure* vc = new ViewClosure(self, new Nan::Utf8String(info[1]));
+	ViewClosure *vc = new ViewClosure(self, new Nan::Utf8String(info[1]));
 
 	if (self->view != NULL) {
-		webkit_web_view_run_javascript(
-			self->view,
-			**script,
-			NULL,
-			WebView::RunFinished,
-			vc
-		);
+		webkit_web_view_run_javascript(self->view, **script, NULL,
+		                               WebView::RunFinished, vc);
 	}
 	delete script;
 }
 
-void WebView::RunSyncFinished(GObject* object, GAsyncResult* result, gpointer data) {
-	GError* error = NULL;
-	ViewClosure* vc = (ViewClosure*)data;
-	WebView* self = (WebView*)(vc->view);
-	if (WEBKIT_IS_WEB_VIEW(object) == FALSE) return;
-	WebKitWebView* pView = WEBKIT_WEB_VIEW(object);
-	if (pView != self->view) return;
+void WebView::RunSyncFinished(GObject *object, GAsyncResult *result,
+                              gpointer data) {
+	GError *error = NULL;
+	ViewClosure *vc = (ViewClosure *)data;
+	WebView *self = (WebView *)(vc->view);
+	if (WEBKIT_IS_WEB_VIEW(object) == FALSE)
+		return;
+	WebKitWebView *pView = WEBKIT_WEB_VIEW(object);
+	if (pView != self->view)
+		return;
 	Nan::HandleScope scope;
-	WebKitJavascriptResult* js_result = webkit_web_view_run_javascript_finish(pView, result, &error);
+	WebKitJavascriptResult *js_result =
+		webkit_web_view_run_javascript_finish(pView, result, &error);
 
-	if (js_result == NULL) { // if NULL, error is defined
-		Nan::Utf8String* nStr = (Nan::Utf8String*)(vc->closure);
-		Local<Value> argv[] = {
-			Nan::Error(error->message),
-			Nan::New<String>(**nStr).ToLocalChecked()
-		};
+	if (js_result == NULL) {                                                                                                                 // if NULL, error is defined
+		Nan::Utf8String *nStr = (Nan::Utf8String *)(vc->closure);
+		Local<Value> argv[] = {Nan::Error(error->message),
+			               Nan::New<String>(**nStr).ToLocalChecked()};
 		self->eventsCallback->Call(2, argv);
 		g_error_free(error);
 		delete nStr;
@@ -821,71 +993,65 @@ void WebView::RunSyncFinished(GObject* object, GAsyncResult* result, gpointer da
 		return;
 	}
 
-	JSGlobalContextRef context = webkit_javascript_result_get_global_context(js_result);
+	JSGlobalContextRef context =
+		webkit_javascript_result_get_global_context(js_result);
 	JSValueRef value = webkit_javascript_result_get_value(js_result);
-	gchar* str_value = NULL;
+	gchar *str_value = NULL;
 	if (JSValueIsString(context, value)) {
 		JSStringRef js_str_value = JSValueToStringCopy(context, value, NULL);
 		gsize str_length = JSStringGetMaximumUTF8CStringSize(js_str_value);
-		str_value = (gchar*)g_malloc(str_length);
+		str_value = (gchar *)g_malloc(str_length);
 		JSStringGetUTF8CString(js_str_value, str_value, str_length);
 		JSStringRelease(js_str_value);
-		Local<Value> argv[] = {
-			Nan::Null(),
-			Nan::New<String>(str_value).ToLocalChecked()
-		};
+		Local<Value> argv[] = {Nan::Null(),
+			               Nan::New<String>(str_value).ToLocalChecked()};
 		self->eventsCallback->Call(2, argv);
 	} else {
 		// this can actually happen when invoking runSync directly
 	}
-	if (str_value != NULL) g_free(str_value);
+	if (str_value != NULL)
+		g_free(str_value);
 	webkit_javascript_result_unref(js_result);
 	delete vc;
 }
 
 NAN_METHOD(WebView::RunSync) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 	if (!info[0]->IsString()) {
 		Nan::ThrowError("runSync(script, ticket) missing script argument");
 		return;
 	}
-	Nan::Utf8String* script = new Nan::Utf8String(info[0]);
-	ViewClosure* vc = new ViewClosure(self, new Nan::Utf8String(info[1]));
+	Nan::Utf8String *script = new Nan::Utf8String(info[0]);
+	ViewClosure *vc = new ViewClosure(self, new Nan::Utf8String(info[1]));
 	if (self->view != NULL) {
-		webkit_web_view_run_javascript(
-			self->view,
-			**script,
-			NULL,
-			WebView::RunSyncFinished,
-			vc
-		);
+		webkit_web_view_run_javascript(self->view, **script, NULL,
+		                               WebView::RunSyncFinished, vc);
 	}
 	delete script;
 }
 
-cairo_status_t WebView::PngWrite(void* closure, const unsigned char* data, unsigned int length) {
-	WebView* self = (WebView*)closure;
+cairo_status_t WebView::PngWrite(void *closure, const unsigned char *data,
+                                 unsigned int length) {
+	WebView *self = (WebView *)closure;
 	Nan::HandleScope scope;
 	Nan::MaybeLocal<v8::Object> buff = Nan::CopyBuffer(
-		reinterpret_cast<char*>(const_cast<unsigned char*>(data)),
-		length
-	);
-	Local<Value> argv[] = {
-		Nan::Null(),
-		buff.ToLocalChecked()
-	};
+		reinterpret_cast<char *>(const_cast<unsigned char *>(data)), length);
+	Local<Value> argv[] = {Nan::Null(), buff.ToLocalChecked()};
 	self->pngCallback->Call(2, argv);
 	return CAIRO_STATUS_SUCCESS;
 }
 
-void WebView::PngFinished(GObject* object, GAsyncResult* result, gpointer data) {
-	WebView* self = (WebView*)data;
-	GError* error = NULL;
-	cairo_surface_t* surface = webkit_web_view_get_snapshot_finish(self->view, result, &error);
+void WebView::PngFinished(GObject *object, GAsyncResult *result,
+                          gpointer data) {
+	WebView *self = (WebView *)data;
+	GError *error = NULL;
+	cairo_surface_t *surface =
+		webkit_web_view_get_snapshot_finish(self->view, result, &error);
 	cairo_status_t status = CAIRO_STATUS_SUCCESS;
 	if (error == NULL) {
-		status = cairo_surface_write_to_png_stream(surface, WebView::PngWrite, data);
+		status =
+			cairo_surface_write_to_png_stream(surface, WebView::PngWrite, data);
 	} else {
 		status = CAIRO_STATUS_INVALID_STATUS;
 	}
@@ -905,31 +1071,29 @@ void WebView::PngFinished(GObject* object, GAsyncResult* result, gpointer data) 
 
 NAN_METHOD(WebView::Png) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 
 	if (!info[0]->IsFunction()) {
 		Nan::ThrowError("png(cb) missing cb argument");
 		return;
 	}
 	if (self->pngCallback != NULL) {
-		Nan::ThrowError("cannot call png(cb) while another call is not yet finished");
+		Nan::ThrowError(
+			"cannot call png(cb) while another call is not yet finished");
 		return;
 	}
 	self->pngCallback = new Nan::Callback(info[0].As<Function>());
-	webkit_web_view_get_snapshot(
-		self->view,
-		WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT,
-		snapshot_options,
-		NULL, //	GCancellable
-		WebView::PngFinished,
-		self
-	);
+	webkit_web_view_get_snapshot(self->view, WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT,
+	                             snapshot_options,
+	                             NULL,                                                                                                                 //	GCancellable
+	                             WebView::PngFinished, self);
 	return;
 }
 
-void WebView::PrintFinished(WebKitPrintOperation* op, gpointer data) {
-	WebView* self = (WebView*)data;
-	if (self->printUri == NULL) return;
+void WebView::PrintFinished(WebKitPrintOperation *op, gpointer data) {
+	WebView *self = (WebView *)data;
+	if (self->printUri == NULL)
+		return;
 	Nan::HandleScope scope;
 	Local<Value> argv[] = {};
 	self->printCallback->Call(0, argv);
@@ -938,12 +1102,11 @@ void WebView::PrintFinished(WebKitPrintOperation* op, gpointer data) {
 	delete self->printUri;
 	self->printUri = NULL;
 }
-void WebView::PrintFailed(WebKitPrintOperation* op, gpointer error, gpointer data) {
-	WebView* self = (WebView*)data;
+void WebView::PrintFailed(WebKitPrintOperation *op, gpointer error,
+                          gpointer data) {
+	WebView *self = (WebView *)data;
 	Nan::HandleScope scope;
-	Local<Value> argv[] = {
-		Nan::Error(((GError*)error)->message)
-	};
+	Local<Value> argv[] = {Nan::Error(((GError *)error)->message)};
 	self->printCallback->Call(1, argv);
 	delete self->printCallback;
 	self->printCallback = NULL;
@@ -951,15 +1114,16 @@ void WebView::PrintFailed(WebKitPrintOperation* op, gpointer error, gpointer dat
 	self->printUri = NULL;
 }
 
-static gboolean find_file_printer(GtkPrinter* printer, char** data) {
-	if (!g_strcmp0(G_OBJECT_TYPE_NAME(gtk_printer_get_backend(printer)), "GtkPrintBackendFile")) {
+static gboolean find_file_printer(GtkPrinter *printer, char **data) {
+	if (!g_strcmp0(G_OBJECT_TYPE_NAME(gtk_printer_get_backend(printer)),
+	               "GtkPrintBackendFile")) {
 		*data = strdup(gtk_printer_get_name(printer));
 		return TRUE;
 	}
 	return FALSE;
 }
 
-static GtkUnit getUnit(gchar* name) {
+static GtkUnit getUnit(gchar *name) {
 	if (g_strcmp0(name, "mm") == 0) {
 		return GTK_UNIT_MM;
 	} else if (g_strcmp0(name, "in") == 0) {
@@ -971,7 +1135,7 @@ static GtkUnit getUnit(gchar* name) {
 
 NAN_METHOD(WebView::Print) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 
 	if (self->printUri != NULL) {
 		Nan::ThrowError("print() can be executed only one at a time");
@@ -989,13 +1153,13 @@ NAN_METHOD(WebView::Print) {
 	self->printCallback = new Nan::Callback(info[2].As<Function>());
 	Local<Object> opts = info[1]->ToObject();
 
-	WebKitPrintOperation* op = webkit_print_operation_new(self->view);
+	WebKitPrintOperation *op = webkit_print_operation_new(self->view);
 
-	GtkPageSetup* setup = gtk_page_setup_new();
+	GtkPageSetup *setup = gtk_page_setup_new();
 
-	GtkPaperSize* paperSize;
-	Nan::Utf8String* paperStr = NULL;
-	Nan::Utf8String* unitStr = NULL;
+	GtkPaperSize *paperSize;
+	Nan::Utf8String *paperStr = NULL;
+	Nan::Utf8String *unitStr = NULL;
 
 	Local<Value> paperVal = opts->Get(H("paper"));
 	if (paperVal->IsString()) {
@@ -1005,12 +1169,8 @@ NAN_METHOD(WebView::Print) {
 		Local<Object> paperObj = paperVal->ToObject();
 		unitStr = getOptStr(paperObj, "unit");
 		paperSize = gtk_paper_size_new_custom(
-			"custom",
-			"custom",
-			NanUInt32OptionValue(paperObj, H("width"), 0),
-			NanUInt32OptionValue(paperObj, H("height"), 0),
-			getUnit(**unitStr)
-		);
+			"custom", "custom", NanUInt32OptionValue(paperObj, H("width"), 0),
+			NanUInt32OptionValue(paperObj, H("height"), 0), getUnit(**unitStr));
 	} else {
 		paperSize = gtk_paper_size_new(gtk_paper_size_get_default());
 	}
@@ -1027,21 +1187,21 @@ NAN_METHOD(WebView::Print) {
 		marginsObj = marginsVal->ToObject();
 		marginUnit = getUnit(**getOptStr(marginsObj, "unit"));
 	}
-	gtk_page_setup_set_left_margin(setup,
-		NanUInt32OptionValue(marginsObj, H("left"), defaultMargin),
+	gtk_page_setup_set_left_margin(
+		setup, NanUInt32OptionValue(marginsObj, H("left"), defaultMargin),
 		marginUnit);
-	gtk_page_setup_set_top_margin(setup,
-		NanUInt32OptionValue(marginsObj, H("top"), defaultMargin),
+	gtk_page_setup_set_top_margin(
+		setup, NanUInt32OptionValue(marginsObj, H("top"), defaultMargin),
 		marginUnit);
-	gtk_page_setup_set_right_margin(setup,
-		NanUInt32OptionValue(marginsObj, H("right"), defaultMargin),
+	gtk_page_setup_set_right_margin(
+		setup, NanUInt32OptionValue(marginsObj, H("right"), defaultMargin),
 		marginUnit);
-	gtk_page_setup_set_bottom_margin(setup,
-		NanUInt32OptionValue(marginsObj, H("bottom"), defaultMargin),
+	gtk_page_setup_set_bottom_margin(
+		setup, NanUInt32OptionValue(marginsObj, H("bottom"), defaultMargin),
 		marginUnit);
 
 	GtkPageOrientation orientation = GTK_PAGE_ORIENTATION_PORTRAIT;
-	Nan::Utf8String* orientationStr = getOptStr(opts, "orientation");
+	Nan::Utf8String *orientationStr = getOptStr(opts, "orientation");
 	if (g_strcmp0(**orientationStr, "landscape") == 0) {
 		orientation = GTK_PAGE_ORIENTATION_LANDSCAPE;
 	}
@@ -1050,14 +1210,16 @@ NAN_METHOD(WebView::Print) {
 	webkit_print_operation_set_page_setup(op, setup);
 
 	// settings
-	GtkPrintSettings* settings = gtk_print_settings_new();
+	GtkPrintSettings *settings = gtk_print_settings_new();
 	gtk_print_settings_set_quality(settings, GTK_PRINT_QUALITY_HIGH);
 
-	char* printer = NULL;
-	gtk_enumerate_printers((GtkPrinterFunc)find_file_printer, &printer, NULL, TRUE);
+	char *printer = NULL;
+	gtk_enumerate_printers((GtkPrinterFunc)find_file_printer, &printer, NULL,
+	                       TRUE);
 	gtk_print_settings_set_printer(settings, printer);
 	delete printer;
-	gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_URI, **self->printUri);
+	gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_URI,
+	                       **self->printUri);
 
 	webkit_print_operation_set_print_settings(op, settings);
 
@@ -1067,20 +1229,24 @@ NAN_METHOD(WebView::Print) {
 	webkit_print_operation_print(op);
 	g_object_unref(op);
 	g_object_unref(settings);
-	if (paperStr != NULL) delete paperStr;
-	if (unitStr != NULL) delete unitStr;
+	if (paperStr != NULL)
+		delete paperStr;
+	if (unitStr != NULL)
+		delete unitStr;
 	delete orientationStr;
 	return;
 }
 
 NAN_GETTER(WebView::get_prop) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 	std::string propstr = TOSTR(property);
 
 	if (propstr == "uri") {
-		if (self->uri != NULL) info.GetReturnValue().Set(Nan::New<String>(self->uri).ToLocalChecked());
-		else return;
+		if (self->uri != NULL)
+			info.GetReturnValue().Set(Nan::New<String>(self->uri).ToLocalChecked());
+		else
+			return;
 	} else {
 		return;
 	}
@@ -1088,21 +1254,20 @@ NAN_GETTER(WebView::get_prop) {
 
 NAN_METHOD(WebView::Inspect) {
 	Nan::HandleScope scope;
-	WebView* self = ObjectWrap::Unwrap<WebView>(info.This());
+	WebView *self = ObjectWrap::Unwrap<WebView>(info.This());
 	if (self->inspector != NULL) {
 		webkit_web_inspector_show(self->inspector);
 	}
 	return;
 }
 
-void WebView::Exit(void*) {
+void WebView::Exit(void *) {
 	Nan::HandleScope scope;
 	for (ObjMap::iterator it = instances.begin(); it != instances.end(); it++) {
-		if (it->second != NULL) it->second->destroy();
+		if (it->second != NULL)
+			it->second->destroy();
 	}
 	instances.clear();
 }
 
-
 NODE_MODULE(webkitgtk, WebView::Init)
-
