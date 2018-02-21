@@ -6,9 +6,6 @@ const fs = require('fs');
 
 si.graphics((data) => {
   const display = data.displays[0];
-  /**
-   * This is a hack to prevent webview showing white background on animation or transition
-   */
   // const container = W(() => {
   W.load('file://' + path.join(__dirname, './views/dock.html'), {
     offscreen: false,
