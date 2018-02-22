@@ -6,8 +6,7 @@ const fs = require('fs');
 
 si.graphics((data) => {
   const display = data.displays[0];
-  // const container = W(() => {
-  W.load('file://' + path.join(__dirname, './views/dock.html'), {
+  const window = W.load('file://' + path.join(__dirname, './views/dock.html'), {
     offscreen: false,
     transparent: true,
     resizing: true,
@@ -21,7 +20,7 @@ si.graphics((data) => {
     style: 'html,body {background-color:transparent !important;color:#FFF;}',
     window: {
       width: display.resolutionx,
-      height: 20,
+      height: 54,
       // type of window
       type: W.WINDOW_TOPLEVEL,
       // the window type
@@ -40,9 +39,15 @@ si.graphics((data) => {
       position: {
         x: 0,
         y: display.resolutiony - 200
+      },
+      inputRegion: {
+        x: 694,
+        y: 136,
+        width: 532,
+        height: 64
       }
     },
-    // show: false,
+    show: false,
     debug: true,
     console: true,
   }).once('ready', function () {
@@ -57,5 +62,4 @@ si.graphics((data) => {
       done();
     }, { display });
   });
-  // });
 });

@@ -22,8 +22,8 @@ fabric.RectAsymmetric = fabric.util.createClass(
         y = noTransform ? this.top : -this.height / 2,
         isRoundedLeft = (rx !== 0 || ry !== 0) && this.side === "left",
         isRoundedRight = (rx !== 0 || ry !== 0) && this.side === "right",
-        isRoundedTop = (rx !== 0 || ry !== 0) && this.side === "top",
-        isRoundedBottom = (rx !== 0 || ry !== 0) && this.side === "bottom",
+        isRoundedTop = (rx !== 0 || ry !== 0) && (this.side === "top" || this.side === "all"),
+        isRoundedBottom = (rx !== 0 || ry !== 0) && (this.side === "bottom" || this.side === "all"),
 
         k = 1 - 0.5522847498;
 
@@ -73,10 +73,10 @@ class DockController {
       noRadius = !radius || radius === 0;
 
     this.padding = padding;
-    this.position = padding;
+    this.position = position;
     this.itemSize = itemSize;
-
     this.items = items || [];
+
     let iconWidth = itemSize + itemPaddingLeft + itemPaddingRight;
     height = itemSize + (paddingTop + paddingBottom);
     width = (iconWidth * icons.length) + (paddingRight + paddingLeft);
@@ -102,15 +102,48 @@ class DockController {
       rx: radius,
       ry: radius,
       hoverCursor: "default",
+      selectable: false,
+      skewY: 0
+    });
+    this.tooltipText = new fabric.IText('', {
+      fontSize: 22,
+      originX: 'center',
+      originY: 'center',
+      fill: "white",
       selectable: false
     });
+    this.tooltipBg = new fabric.RectAsymmetric({
+      radius: 10,
+      originX: 'center',
+      originY: 'center',
+      fill: 'rgba(0,0,0,1)',
+      width: 110,
+      height: 36,
+      hoverCursor: "default",
+      selectable: false,
+      rx: 5,
+      ry: 5,
+      side: "all",
+    });
+    this.tooltip = new fabric.Group([this.tooltipBg, this.tooltipText], {
+      left: this.dock.left,
+      top: this.dock.top - 70,
+      height: 30,
+      opacity: 0
+    });
+
     this.canvas = new fabric.Canvas("container");
-    this.canvas.on('mouse:down', this.onCanvasMouseDown.bind(this));
+    this.canvas.on('mouse:down', this.onMouseDown.bind(this));
+    this.canvas.on('mouse:over', this.onMouseOver.bind(this));
+    this.canvas.on('mouse:out', () => {
+      this.tooltip.animate({ opacity: 0 })
+    });
     this.canvas.selection = false;
 
     window.addEventListener("resize", this.resizeCanvas.bind(this), false);
     this.resizeCanvas();
     this.canvas.add(this.dock);
+    this.canvas.add(this.tooltip);
 
     this.lastX = this.dock.left + paddingLeft;
     if (items && items.length > 0) {
@@ -124,7 +157,30 @@ class DockController {
     this.canvas.setWidth(window.innerWidth);
     this.canvas.renderAll();
   }
-  onCanvasMouseDown(e) {
+  onMouseOver(e) {
+    if (e.target && e.target !== this.dock && e.target !== this.tooltip) {
+      this.tooltip.item(1).set({ text: e.target.name });
+      const width = this.tooltip.item(1).width + 14;
+      this.tooltip.item(0).set({ width });
+      const center = e.target.width / 2;
+      const left = e.target.left - ((this.tooltip.item(1).width / 2) - center + 7);
+
+      this.tooltip.animate({ width, left, opacity: 1 }, {
+        duration: 500,
+        onChange: this.canvas.renderAll.bind(this.canvas),
+        // easing: fabric.util.ease["easeInCubic"],
+        duration: 500,
+      });
+    } else {
+      this.tooltip.animate({ opacity: 0 }, {
+        duration: 500,
+        onChange: this.canvas.renderAll.bind(this.canvas),
+        easing: fabric.util.ease["easeOutCubic"],
+        duration: 500
+      });
+    }
+  }
+  onMouseDown(e) {
     if (e.target && e.target !== this.dock && !e.target.animating && e.target.animation !== false) {
       e.target.animating = true;
       let tmpTop = e.target.top;
@@ -174,6 +230,7 @@ class DockController {
     if (!item.image && item.path) {
       this.items.push(item);
       fabric.Image.fromURL(item.path, (img) => {
+        img.name = item.name;
         let itemPaddingLeft = this.padding.left || this.padding;
         let paddingRight = this.padding.right || this.padding;
         let paddingTop = this.padding.top || this.padding;

@@ -21,7 +21,7 @@
       position: absolute;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.7);
+      /* background: rgba(0, 0, 0, 0.7); */
       max-height: 100%;
       box-sizing: border-box;
       border-top-right-radius: 10px;
@@ -97,20 +97,11 @@
       }
     }
   </style>
-  <script type="text/javascript">
-    function rotate(e) {
-      e.target.classList.toggle('bounce');
-    }
-    // moveTo(0, 0)
-
-  </script>
 </head>
 
 <body>
   <canvas id="container"></canvas>
-  <!-- <div id="container"></div> -->
   <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/90/three.js"></script> -->
-  <!-- <script src="https://cdn.rawgit.com/konvajs/konva/1.7.6/konva.min.js"></script> -->
   <script src="../js/libs/fabric.js"></script>
   <script src="../js/DockController.js"></script>
   <script src="../js/DockItem.js"></script>
