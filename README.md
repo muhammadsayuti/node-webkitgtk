@@ -498,6 +498,12 @@ methods
   Using promises is the only way to catch errors from previous jobs.  
   Otherwise the callback-style API is assumed.  
 
+* show()  
+  Show the window if you initially doesn't set show option to true or when you've hide the window before.
+
+* hide()  
+  Hide the window when the window is already shown.
+
 * run(sync-script, param*, cb)  
   any synchronous script text or global function.  
   If it's a function, multiple parameters can be passed, as long as they are
@@ -634,6 +640,11 @@ webkitgtk4-devel
 
 On ubuntu/14:
 try [the WebKit team ppa](https://launchpad.net/~webkit-team)
+
+Examples Preview:
+
+- Dock
+<img src="examples/dock.gif" />
 
 License
 -------
