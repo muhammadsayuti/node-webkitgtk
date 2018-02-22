@@ -504,6 +504,9 @@ methods
 * hide()  
   Hide the window when the window is already shown.
 
+* setInputShapeRegion(region) 
+  Set a region where it's clickable by the user. this is useful when you want a window with height or width lower than 200 but you can't, because there is some issue when window have a width or height lower than 200.
+
 * run(sync-script, param*, cb)  
   any synchronous script text or global function.  
   If it's a function, multiple parameters can be passed, as long as they are
