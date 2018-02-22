@@ -301,5 +301,9 @@ script[src], link[href] tags that are inserted by javascript.
 4.8.0
 -----
 
-- add "resizing" option to allow window resizeTo/moveTo/resizeBy/moveBy
-
+- add "resizable" option to allow window resizeTo/moveTo/resizeBy/moveBy
+- add "inputRegion" option to create a clickable region in the window
+- add "hide()" method to hide the window
+- add "show()" method to show the window
+- add "inputShapeRegion(region)" method to create a clickable region in the window
+- some breaking changes in options
