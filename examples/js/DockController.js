@@ -73,6 +73,7 @@ class DockController {
       noRadius = !radius || radius === 0;
 
     this.padding = padding;
+    this.itemPadding = itemPadding;
     this.position = position;
     this.itemSize = itemSize;
     this.items = items || [];
@@ -103,7 +104,6 @@ class DockController {
       ry: radius,
       hoverCursor: "default",
       selectable: false,
-      skewY: 0
     });
     this.tooltipText = new fabric.IText('', {
       fontSize: 22,
@@ -113,7 +113,6 @@ class DockController {
       selectable: false
     });
     this.tooltipBg = new fabric.RectAsymmetric({
-      radius: 10,
       originX: 'center',
       originY: 'center',
       fill: 'rgba(0,0,0,1)',
@@ -129,7 +128,8 @@ class DockController {
       left: this.dock.left,
       top: this.dock.top - 70,
       height: 30,
-      opacity: 0
+      opacity: 0,
+      selectable: false,
     });
 
     this.canvas = new fabric.Canvas("container");
@@ -148,8 +148,8 @@ class DockController {
     this.lastX = this.dock.left + paddingLeft;
     if (items && items.length > 0) {
       items.forEach((item) => {
-        this.add(item);
-      })
+        this.add(item, true);
+      });
     }
   }
   resizeCanvas() {
@@ -158,7 +158,11 @@ class DockController {
     this.canvas.renderAll();
   }
   onMouseOver(e) {
-    if (e.target && e.target !== this.dock && e.target !== this.tooltip) {
+    const dock = this.dock, tooltip = this.tooltip,
+      tooltipBg = tooltip.item(0), tooltipText = tooltip.item(1),
+      target = e.target;
+    if (target && target !== dock && target !== tooltip && target !== tooltipBg && target !== tooltipText) {
+      this.hovering = true;
       this.tooltip.item(1).set({ text: e.target.name });
       const width = this.tooltip.item(1).width + 14;
       this.tooltip.item(0).set({ width });
@@ -166,17 +170,15 @@ class DockController {
       const left = e.target.left - ((this.tooltip.item(1).width / 2) - center + 7);
 
       this.tooltip.animate({ width, left, opacity: 1 }, {
-        duration: 500,
+        duration: 200,
         onChange: this.canvas.renderAll.bind(this.canvas),
-        // easing: fabric.util.ease["easeInCubic"],
-        duration: 500,
       });
     } else {
+      this.hovering = false;
       this.tooltip.animate({ opacity: 0 }, {
-        duration: 500,
+        duration: 100,
         onChange: this.canvas.renderAll.bind(this.canvas),
         easing: fabric.util.ease["easeOutCubic"],
-        duration: 500
       });
     }
   }
@@ -203,16 +205,22 @@ class DockController {
       paddingLeft = this.padding.left || this.padding,
       paddingRight = this.padding.right || this.padding,
       paddingTop = this.padding.top || this.padding,
-      paddingBottom = this.padding.bottom || this.padding;
+      paddingBottom = this.padding.bottom || this.padding,
+      itemPaddingRight = this.itemPadding.right || this.itemPadding,
+      itemPaddingLeft = this.itemPadding.left || this.itemPadding,
+      itemPaddingTop = this.itemPadding.top || (paddingTop && paddingTop > 0) ? paddingTop : this.itemPadding,
+      itemPaddingBottom = this.itemPadding.Bottom || (paddingBottom && paddingBottom > 0) ? paddingBottom : this.itemPadding;
 
-    h = this.itemSize + (paddingTop + paddingBottom);
+    h = this.itemSize + (itemPaddingTop + itemPaddingBottom);
 
     this.items.forEach((item, index) => {
-      let iconWidth = item.width || this.itemSize;
+      let iconWidth = (item.width || this.itemSize) + itemPaddingLeft + itemPaddingRight;
       if (i === 0) {
-        w += iconWidth + (paddingLeft + paddingRight);
+        w += iconWidth + paddingLeft;
+      } else if (i === this.items.length - 1) {
+        w += iconWidth + paddingRight;
       } else {
-        w += iconWidth + paddingLeft + paddingRight;
+        w += iconWidth;
       }
     });
 
@@ -222,13 +230,15 @@ class DockController {
     else if (position === 'right') side = 'left', top = window.innerHeight - h, left = window.innerWidth - width;
 
     this.dock.set({ width: w, side, top, left });
+    this.dock.setCoords();
   }
-  add(item) {
+  add(item, noSave) {
     let paddingLeft = this.padding.left || this.padding;
     let paddingRight = this.padding.right || this.padding;
     let paddingTop = this.padding.top || this.padding;
     if (!item.image && item.path) {
-      this.items.push(item);
+      if (!noSave)
+        this.items.push(item);
       fabric.Image.fromURL(item.path, (img) => {
         img.name = item.name;
         let itemPaddingLeft = this.padding.left || this.padding;
