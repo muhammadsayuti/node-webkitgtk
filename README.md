@@ -312,7 +312,7 @@ init(opts, cb) options
   boolean, default true  
   By default, nothing is shown on display. Set to false to display a window.
 
-- resizing  
+- resizable  
   boolean, default false  
   Set to true to allow window.moveTo/resizeTo (and moveBy/resizeBy) to be
   handed over to the window manager (which might ignore the requests).  
