@@ -6,8 +6,11 @@
                    get, set);
 #define TOSTR(obj) (*String::Utf8Value((obj)->ToString()))
 #define H(name) Nan::New<String>(name).ToLocalChecked()
+#define _STR(x) #x
+#define STR(x) _STR(x)
 
 #include <glib.h>
+
 #include <gtk/gtk.h>
 #include <libsoup/soup.h>
 #include <nan.h>
@@ -37,9 +40,9 @@ NAN_INLINE uint32_t NanUInt32OptionValue(v8::Local<v8::Object> optionsObj,
                                          v8::Handle<v8::String> opt,
                                          uint32_t def) {
   return !optionsObj.IsEmpty() && optionsObj->Has(opt) &&
-                 optionsObj->Get(opt)->IsNumber()
-             ? optionsObj->Get(opt)->Uint32Value()
-             : def;
+         optionsObj->Get(opt)->IsNumber()
+         ? optionsObj->Get(opt)->Uint32Value()
+         : def;
 }
 
 #endif

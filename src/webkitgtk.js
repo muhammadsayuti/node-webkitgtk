@@ -1064,6 +1064,13 @@ WebKit.prototype.hide = function () {
   }
   this.webview.hide();
 };
+WebKit.prototype.setInputShapeRegion = function (region) {
+  if (!this.webview) {
+    throw new Error('webview is not available');
+  }
+  this.webview.setInputShapeRegion(region);
+};
+
 WebKit.prototype.getXid = function () {
   if (!this.webview) {
     throw new Error('webview is not available');
