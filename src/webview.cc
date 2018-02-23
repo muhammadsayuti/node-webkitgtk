@@ -204,11 +204,13 @@ WebView::WebView(Handle<Object> opts) {
     this->inputRegion.height = h;
     this->inputRegion.x = x;
     this->inputRegion.y = y;
+    this->inputRegion.empty = FALSE;
   } else {
     this->inputRegion.width = 0;
     this->inputRegion.height = 0;
     this->inputRegion.x = 0;
     this->inputRegion.y = 0;
+    this->inputRegion.empty = TRUE;
   }
   gtk_widget_show_all(window);
 
@@ -260,12 +262,9 @@ cairo_region_t* WebView::CreateRegion(int w, int h, int x, int y){
 
 void WebView::UpdateInputShape(WebView* self){
   Nan::HandleScope scope;
+  InputRegion opts = self->inputRegion;
 
-  cairo_rectangle_int_t opts = self->inputRegion;
-
-  #pragma message("FIX ME: find another way to check if we should apply the input region or not");
-  if((opts.x > 0 || opts.y > 0) && (opts.width > 0 || opts.height > 0)) {
-
+  if(!opts.empty) {
     int w = opts.width;
     int h = opts.height;
     int x = opts.x;
@@ -299,8 +298,7 @@ void WebView::UpdateInputShape(WebView* self){
   }
 }
 
-gboolean WebView::OnDraw(GtkWidget *widget, cairo_t *cr, gpointer data){
-  // printf("OnDraw fired");
+gboolean WebView::OnDraw(GtkWidget *widget, cairo_t *cr, gpointer data) {
   WebView *self = (WebView *)data;
 
   UpdateInputShape(self);
@@ -355,23 +353,9 @@ NAN_METHOD(WebView::SetInputShapeRegion){
     self->inputRegion.height = h;
     self->inputRegion.x = x;
     self->inputRegion.y = y;
-
+    self->inputRegion.empty = FALSE;
     g_message("input region x=%d y=%d width=%d height=%d", x, y, w, h);
-    int width = gtk_widget_get_allocated_width(GTK_WIDGET(self->window));
-    int height = gtk_widget_get_allocated_height(GTK_WIDGET(self->window));
-
-    GdkWindow *gdkWindow = gtk_widget_get_window(GTK_WIDGET(self->window));
-
-    cairo_region_t* window_region = CreateRegion(width, height, 0, 0);
-    // first lest check if we should create the outside region for the top side
-    if(y > 0) {
-      cairo_region_t* top_region = CreateRegion(width, height - h, 0, 0);
-      cairo_region_subtract(window_region, top_region);
-      gdk_window_input_shape_combine_region(GDK_WINDOW(gdkWindow), window_region, 0, 0);
-    }
-    if(x > 0) {
-
-    }
+    UpdateInputShape(self);
   }
 }
 

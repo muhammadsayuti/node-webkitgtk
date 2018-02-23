@@ -12,6 +12,11 @@
 
 using namespace v8;
 
+struct InputRegion {
+  int x, y, width, height;
+  bool empty = TRUE;
+};
+
 class ViewClosure {
 public:
   void* view;
@@ -104,7 +109,7 @@ private:
   bool decorated;
   char* role = NULL;
 
-  cairo_rectangle_int_t inputRegion = {0};
+  InputRegion inputRegion;
 
   WebKitWebContext* context = NULL;
   WebKitWebView* view = NULL;
