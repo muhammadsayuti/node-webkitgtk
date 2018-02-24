@@ -14,20 +14,16 @@
                     ],
                     'include_dirs': ["<!(node -e \"require('nan')\")"],
                     'cflags_cc': [
-                        '<!@(pkg-config gtk+-3.0 --cflags)',
-                        '<!@(pkg-config gdk-3.0 --cflags)',
-                        '<!@(pkg-config gdk-x11-3.0 --cflags)',
                         '<!@(pkg-config glib-2.0 --cflags)',
                         '<!@(pkg-config webkit2gtk-4.0 --cflags)',
                         '-I/usr/include/libsoup-2.4/libsoup',
                         '-I/usr/include/gtk-3.0/unix-print',
+                        '-I/usr/include/gtk-3.0/gdk',
                         # '-DWNCK_I_KNOW_THIS_IS_UNSTABLE',
                     ],
                     'libraries':[
-                        '<!@(pkg-config gdk-3.0 --libs)',
                         '<!@(pkg-config gtk+-3.0 --libs)',
                         '<!@(pkg-config glib-2.0 --libs)',
-                        '<!@(pkg-config gdk-x11-3.0 --libs)',
                         '<!@(pkg-config webkit2gtk-4.0 --libs)'
                     ],
                     'ldflags': ['-ldl']
