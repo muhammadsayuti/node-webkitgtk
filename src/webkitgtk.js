@@ -1,4 +1,4 @@
-var debug = require('debug')('webkitgtk');
+var debug = require('debug')('webkit-gtk');
 var util = require('util');
 var EventEmitter = require('events').EventEmitter;
 var stream = require('stream');
@@ -85,9 +85,9 @@ WebKit.prototype.init = function (opts, cb) {
     debugWarn = console.warn;
     debugError = console.error;
   } else {
-    debugStall = require('debug')('webkitgtk:timeout');
-    debugWarn = require('debug')('webkitgtk:warn');
-    debugError = require('debug')('webkitgtk:error');
+    debugStall = require('debug')('webkit-gtk:timeout');
+    debugWarn = require('debug')('webkit-gtk:warn');
+    debugError = require('debug')('webkit-gtk:error');
   }
 
   var priv = this.priv;
@@ -103,7 +103,7 @@ WebKit.prototype.init = function (opts, cb) {
   if (opts.offscreen == null) opts.offscreen = true;
 
   if (opts.offscreen) {
-    // as of webkitgtk version 2.14,
+    // as of webkit-gtk version 2.14,
     // compositing mode has huge performance impact on initialization,
     // and it is useless in offscreen mode
     process.env.WEBKIT_DISABLE_COMPOSITING_MODE = "1";
@@ -139,7 +139,7 @@ WebKit.prototype.binding = function (opts, cfg, cb) {
     var priv = this.priv;
     if (child) priv.xvfb = child;
     process.env.DISPLAY = ":" + newDisplay;
-    var Bindings = require(path.join(__dirname, '../lib/webkitgtk.node'));
+    var Bindings = require(path.join(__dirname, '../lib/webkit-gtk.node'));
     cfg.webextension = path.join(__dirname, '../lib/ext');
     this.webview = new Bindings(cfg);
     instances++;
@@ -341,7 +341,7 @@ function logError(msg, file, line, col, err) {
     if (col) msg += ':' + col;
   }
   if (err && err.stack) msg += '\n ' + err.stack.replace(/\n/g, '\n ');
-  debugError("webkitgtk ", msg);
+  debugError("webkit-gtk ", msg);
 }
 
 Object.defineProperty(WebKit.prototype, "uri", {

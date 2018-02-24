@@ -1,7 +1,7 @@
 {
     'targets': [
         {
-            'target_name': 'webkitgtk',
+            'target_name': 'webkit-gtk',
             'conditions': [
                 ['OS=="linux"', {
                     'sources': [
@@ -78,19 +78,19 @@
         {
             'target_name': 'action_after_build',
             'type': 'none',
-            'dependencies': ['mkdirs', 'webkitgtk', 'webextension'],
+            'dependencies': ['mkdirs', 'webkit-gtk', 'webextension'],
             'conditions': [
                 ['OS=="linux"', {
                     'actions': [
                         {
                             'action_name': 'move_node',
                             'inputs': [
-                                '<@(PRODUCT_DIR)/webkitgtk.node'
+                                '<@(PRODUCT_DIR)/webkit-gtk.node'
                             ],
                             'outputs': [
-                                'lib/webkitgtk'
+                                'lib/webkit-gtk'
                             ],
-                            'action': ['cp', '<@(PRODUCT_DIR)/webkitgtk.node', 'lib/webkitgtk.node']
+                            'action': ['cp', '<@(PRODUCT_DIR)/webkit-gtk.node', 'lib/webkit-gtk.node']
                         },
                         {
                             'action_name': 'move_ext',
