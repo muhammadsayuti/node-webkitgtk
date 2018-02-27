@@ -26,7 +26,6 @@ public:
     view = v;
     closure = c;
   }
-
   ~ViewClosure() {
     view = NULL;
     closure = NULL;
@@ -71,7 +70,6 @@ public:
   static void UpdateInputShape(WebView*);
   static cairo_region_t* CreateRegion(int width, int height, int x, int y);
   static void handleEventMessage(WebKitUserContentManager*, WebKitJavascriptResult*, gpointer);
-
   void destroy();
   void unloaded();
 
